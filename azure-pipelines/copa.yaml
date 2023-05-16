@@ -1,0 +1,74 @@
+name: copa_$(Date:yyyyMMdd)_$(Rev:r)
+trigger: none
+pr: none
+
+parameters:
+  - name: image
+    displayName: Image To Patch
+    type: string
+    default: mcr.microsoft.com/oss/nginx/nginx:1.21.6
+
+variables:
+  trivy.version: 0.38.3
+  copa.version: 0.1.0
+
+stages:
+  - stage: patch
+    jobs:
+    - job: copa
+      steps:
+        - bash: |
+            set -e
+            # Install the trivy version specified in the variable 
+            wget "https://github.com/aquasecurity/trivy/releases/download/v$(trivy.version)/trivy_$(trivy.version)_Linux-64bit.tar.gz"
+            sudo tar -C /usr/local/bin -zxvf trivy_$(trivy.version)_Linux-*.tar.gz trivy
+            sudo chmod +x /usr/local/bin/trivy
+            # Install the copacetic version specified in the variable
+            wget "https://github.com/project-copacetic/copacetic/releases/download/v$(copa.version)/copa_$(copa.version)_linux_amd64.tar.gz"
+            sudo tar -C /usr/local/bin -zxvf copa_$(copa.version)_*.tar.gz copa
+            sudo chmod +x /usr/local/bin/copa
+          displayName: Download and Install Trivy and Copa
+        - bash: |
+            set -e
+            tag=${IMAGE#*:} 
+            repo=${IMAGE%:*} 
+            BUILDKIT_VERSION=v0.10.5
+            BUILDKIT_PORT=
+            # Start buildkit for use by copa
+            docker run \
+              --detach \
+              --rm \
+              --privileged \
+              -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
+              --name buildkitd \
+              --entrypoint buildkitd \
+              "moby/buildkit:$BUILDKIT_VERSION" \
+              --addr tcp://0.0.0.0:$BUILDKIT_PORT
+          displayName: Start buildkit
+        - bash: |
+            set -e
+            tag=${IMAGE#*:} 
+            repo=${IMAGE%:*} 
+            # scan the image with trivy and store the output as a json file named copa-patch.json
+            trivy image --vuln-type os --ignore-unfixed -f json -o copa-patch.json $IMAGE
+            # now use the scan result to patch the image, if needed
+            copa patch \
+              -i $IMAGE \
+              -r copa-patch.json \
+              -t $tag-patched \
+              -a tcp://0.0.0.0:$BUILDKIT_PORT
+            # save the new patched image as a tar file that can be used later
+            docker save -o patched-image.tar $repo:$tag-patched
+          env:
+            IMAGE: ${{ parameters.image }}
+          displayName: Scan and Patch Image
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: $(System.DefaultWorkingDirectory)/copa-patch.json
+            artifactName: scan_results
+          displayName: Upload Scan Results as a pipeline artifact
+        - task: PublishPipelineArtifact@1
+          inputs:
+            targetPath: $(System.DefaultWorkingDirectory)/patched-image.tar
+            artifactName: patched
+          displayName: Upload patched image as a pipeline artifact
