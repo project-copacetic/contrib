@@ -9,8 +9,8 @@ parameters:
     default: mcr.microsoft.com/oss/nginx/nginx:1.21.6
 
 variables:
-  trivy.version: 0.38.3
-  copa.version: 0.1.0
+  trivy.version: 0.41.0
+  copa.version: 0.2.0
 
 stages:
   - stage: patch
