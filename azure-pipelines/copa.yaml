@@ -6,11 +6,13 @@ parameters:
   - name: image
     displayName: Image To Patch
     type: string
-    default: mcr.microsoft.com/oss/nginx/nginx:1.21.6
+    default: "docker.io/library/nginx:1.21.6"
 
 variables:
-  trivy.version: 0.41.0
-  copa.version: 0.2.0
+  trivy.version: "0.41.0"
+  copa.version: "0.2.0"
+  buildkit.version: "0.11.6"
+  buildkit.port: "8888"
 
 stages:
   - stage: patch
@@ -19,7 +21,7 @@ stages:
       steps:
         - bash: |
             set -e
-            # Install the trivy version specified in the variable 
+            # Install the trivy version specified in the variable
             wget "https://github.com/aquasecurity/trivy/releases/download/v$(trivy.version)/trivy_$(trivy.version)_Linux-64bit.tar.gz"
             sudo tar -C /usr/local/bin -zxvf trivy_$(trivy.version)_Linux-*.tar.gz trivy
             sudo chmod +x /usr/local/bin/trivy
@@ -30,25 +32,21 @@ stages:
           displayName: Download and Install Trivy and Copa
         - bash: |
             set -e
-            tag=${IMAGE#*:} 
-            repo=${IMAGE%:*} 
-            BUILDKIT_VERSION=v0.10.5
-            BUILDKIT_PORT=
             # Start buildkit for use by copa
             docker run \
               --detach \
               --rm \
               --privileged \
-              -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
+              -p 127.0.0.1:$(buildkit.port):$(buildkit.port)/tcp \
               --name buildkitd \
               --entrypoint buildkitd \
-              "moby/buildkit:$BUILDKIT_VERSION" \
-              --addr tcp://0.0.0.0:$BUILDKIT_PORT
+              "moby/buildkit:v$(buildkit.version)" \
+              --addr tcp://0.0.0.0:$(buildkit.port)
           displayName: Start buildkit
         - bash: |
             set -e
-            tag=${IMAGE#*:} 
-            repo=${IMAGE%:*} 
+            tag=${IMAGE#*:}
+            repo=${IMAGE%:*}
             # scan the image with trivy and store the output as a json file named copa-patch.json
             trivy image --vuln-type os --ignore-unfixed -f json -o copa-patch.json $IMAGE
             # now use the scan result to patch the image, if needed
@@ -56,7 +54,7 @@ stages:
               -i $IMAGE \
               -r copa-patch.json \
               -t $tag-patched \
-              -a tcp://0.0.0.0:$BUILDKIT_PORT
+              -a tcp://0.0.0.0:$(buildkit.port)
             # save the new patched image as a tar file that can be used later
             docker save -o patched-image.tar $repo:$tag-patched
           env:
